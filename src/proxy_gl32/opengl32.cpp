@@ -1,18 +1,26 @@
 #include <windows.h>
 #include <stdio.h>
+#include <GL/gl.h>
 #include "proxy_gl32.h"
+
+#pragma comment(lib, "opengl32.lib")
 
 typedef const GLubyte* (WINAPI* PFN_glGetString)(GLenum name);
 typedef void (WINAPI* PFN_glEnable)(GLenum cap);
 typedef void (WINAPI* PFN_glTexParameterf)(GLenum target, GLenum pname, GLfloat param);
 typedef PROC (WINAPI* PFN_wglGetProcAddress)(LPCSTR name);
 typedef BOOL (WINAPI* PFN_wglSwapBuffers)(HDC hdc);
+
 PFN_glGetString orig_glGetString = nullptr;
 PFN_glEnable orig_glEnable = nullptr;
 PFN_glTexParameterf orig_glTexParameterf = nullptr;
 PFN_wglGetProcAddress orig_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers orig_wglSwapBuffers = nullptr;
 HINSTANCE mHinst = 0, mHinstDLL = 0;
+
+BOOL WINAPI fake_wglSwapIntervalEXT(int interval) {
+    return TRUE; 
+}
 
 extern "C" UINT_PTR mProcs[368] = {0};
 
@@ -391,33 +399,35 @@ const GLubyte* WINAPI h_glGetString(GLenum name) {
     if (name == GL_VENDOR) return (const GLubyte*)"NVIDIA Corporation";
     if (name == GL_RENDERER) return (const GLubyte*)"NVIDIA GeForce RTX 4090";
     if (name == GL_VERSION) return (const GLubyte*)"4.6.0 NVIDIA 551.23";
-
-    return orig_glGetString(name);
+    if (orig_glGetString) return orig_glGetString(name);
+    return (const GLubyte*)"";
 }
 
 void WINAPI h_glEnable(GLenum cap) {
     if (cap == GL_FOG || cap == GL_LIGHTING) return;
-    orig_glEnable(cap);
+    if (orig_glEnable) orig_glEnable(cap);
 }
 
 void WINAPI h_glTexParameterf(GLenum target, GLenum pname, GLfloat param) {
-    if (pname == GL_TEXTURE_LOD_BIAS) {
-        return orig_glTexParameterf(target, pname, 3.0f);
+    if (pname == 0x85B3) {
+        if (orig_glTexParameterf) orig_glTexParameterf(target, pname, 3.0f);
+        return;
     }
-    orig_glTexParameterf(target, pname, param);
+    if (orig_glTexParameterf) orig_glTexParameterf(target, pname, param);
 }
 
 BOOL WINAPI h_wglSwapBuffers(HDC hdc) {
-    glFlush();
-    return orig_wglSwapBuffers(hdc);
+    glFlush(); 
+    if (orig_wglSwapBuffers) return orig_wglSwapBuffers(hdc);
+    return FALSE;
 }
 
 PROC WINAPI h_wglGetProcAddress(LPCSTR name) {
-    PROC proc = orig_wglGetProcAddress(name);
     if (name && strcmp(name, "wglSwapIntervalEXT") == 0) {
-        return (PROC)[](int i) { return TRUE; }; 
+        return (PROC)fake_wglSwapIntervalEXT;
     }
-    return proc;
+    if (orig_wglGetProcAddress) return orig_wglGetProcAddress(name);
+    return nullptr;
 }
 
 #ifndef _DEBUG
